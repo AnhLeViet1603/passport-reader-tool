@@ -1,0 +1,31 @@
+[project]
+name = "passport-reader-tool"
+version = "0.1.0"
+description = "Desktop batch MRZ reader for passports with Excel workbook support."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+    "openpyxl>=3.1",
+    "passporteye>=2.2",
+    "pillow>=10.0",
+    "pyside6>=6.7",
+]
+
+[project.scripts]
+passport-reader-tool = "passport_reader_tool.app:main"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.6",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
