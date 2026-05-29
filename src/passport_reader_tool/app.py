@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -26,9 +26,9 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QSplashScreen,
 )
 
-from passport_reader_tool.batch_processor import BatchProgress, process_folder
 from passport_reader_tool.excel_service import EXCEL_HEADERS, ExcelWorkbookService
 from passport_reader_tool.models import PassportRecord
 from passport_reader_tool.tesseract_runtime import configure_tesseract
@@ -46,6 +46,8 @@ class BatchWorker(QThread):
 
     def run(self) -> None:
         try:
+            from passport_reader_tool.batch_processor import process_folder
+
             records = process_folder(self.folder, self.start_row_number, progress_callback=self.progress.emit)
             self.finished.emit(records)
         except Exception as exc:
@@ -190,7 +192,7 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_batch_failed)
         self.worker.start()
 
-    def _on_batch_progress(self, progress: BatchProgress, record: PassportRecord) -> None:
+    def _on_batch_progress(self, progress: object, record: PassportRecord) -> None:
         percent = int((progress.completed / progress.total) * 100) if progress.total else 0
         self.progress.setValue(percent)
         status = "ERROR" if record.is_error else "OK"
@@ -324,9 +326,41 @@ class MainWindow(QMainWindow):
 def main() -> None:
     freeze_support()
     app = QApplication(sys.argv)
+    splash = _create_splash()
+    splash.show()
+    splash.showMessage("Loading workbook tools...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#ffffff"))
+    app.processEvents()
     window = MainWindow()
+    splash.showMessage("Opening app...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#ffffff"))
+    app.processEvents()
     window.show()
+    splash.finish(window)
     sys.exit(app.exec())
+
+
+def _create_splash() -> QSplashScreen:
+    pixmap = QPixmap(520, 280)
+    pixmap.fill(QColor("#16202a"))
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QColor("#ffffff"))
+    title_font = QFont("Segoe UI", 24)
+    title_font.setBold(True)
+    painter.setFont(title_font)
+    painter.drawText(32, 86, "Passport Reader Tool")
+
+    painter.setPen(QColor("#b8c7d6"))
+    subtitle_font = QFont("Segoe UI", 11)
+    painter.setFont(subtitle_font)
+    painter.drawText(34, 126, "Preparing desktop workspace and OCR runtime")
+
+    painter.setPen(QColor("#3fbf8f"))
+    painter.setBrush(QColor("#3fbf8f"))
+    painter.drawRoundedRect(34, 166, 452, 6, 3, 3)
+    painter.end()
+
+    return QSplashScreen(pixmap)
 
 
 if __name__ == "__main__":
