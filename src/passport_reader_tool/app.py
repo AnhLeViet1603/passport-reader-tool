@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from shutil import which
 from datetime import date, datetime
 from multiprocessing import freeze_support
 from pathlib import Path
@@ -32,6 +31,7 @@ from PySide6.QtWidgets import (
 from passport_reader_tool.batch_processor import BatchProgress, process_folder
 from passport_reader_tool.excel_service import EXCEL_HEADERS, ExcelWorkbookService
 from passport_reader_tool.models import PassportRecord
+from passport_reader_tool.tesseract_runtime import configure_tesseract
 
 
 class BatchWorker(QThread):
@@ -312,12 +312,12 @@ class MainWindow(QMainWindow):
             return None
 
     def _warn_if_tesseract_missing(self) -> None:
-        if which("tesseract"):
+        if configure_tesseract():
             return
         QMessageBox.warning(
             self,
             "Tesseract not found",
-            "Tesseract OCR is not available on PATH. Excel features will work, but OCR will fail until Tesseract is installed.",
+            "Tesseract OCR is not bundled and is not available on PATH. Excel features will work, but OCR will fail until Tesseract is bundled or installed.",
         )
 
 

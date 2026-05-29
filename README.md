@@ -26,5 +26,20 @@ Tesseract OCR must be installed and available on `PATH` for OCR to work.
 ## Windows build
 
 `make build` runs PyInstaller and writes the desktop app into `dist/PassportReaderTool/`.
-Install Tesseract OCR on the target machine or package it separately and make sure
-`tesseract.exe` is available on `PATH`.
+
+To ship OCR without requiring users to install Tesseract, put a portable Windows
+Tesseract distribution in:
+
+```text
+vendor/tesseract/tesseract.exe
+vendor/tesseract/tessdata/eng.traineddata
+```
+
+Then run:
+
+```powershell
+make build
+```
+
+The build copies that folder into `dist/PassportReaderTool/_internal/tesseract`,
+and the app uses the bundled `tesseract.exe` automatically.

@@ -10,6 +10,7 @@ import numpy as np
 from passporteye import read_mrz
 
 from passport_reader_tool.models import PassportRecord
+from passport_reader_tool.tesseract_runtime import configure_tesseract
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,7 @@ class OcrConfig:
 class MrzOcrPipeline:
     def __init__(self, config: OcrConfig | None = None) -> None:
         self.config = config or OcrConfig()
+        configure_tesseract()
 
     def read_passport(self, image_path: str | Path, row_number: int, added_date: date | None = None) -> PassportRecord:
         source_path = Path(image_path)

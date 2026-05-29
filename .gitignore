@@ -24,5 +24,8 @@ samples/private/
 *.xls
 *.csv
 
+vendor/tesseract/*
+!vendor/tesseract/README.md
+
 .DS_Store
 Thumbs.db
