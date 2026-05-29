@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -121,6 +121,8 @@ class ExcelWorkbookService:
             worksheet.column_dimensions[worksheet.cell(row=1, column=index).column_letter].width = width
 
     def _date_or_none(self, value: object) -> date | None:
+        if isinstance(value, datetime):
+            return value.date()
         if isinstance(value, date):
             return value
         return None

@@ -128,19 +128,22 @@ class MrzOcrPipeline:
             date_of_birth=self._parse_mrz_date(data.get("date_of_birth")),
             sex=str(data.get("sex") or "").strip(),
             passport_number=str(data.get("number") or "").replace("<", "").strip(),
-            expiry_date=self._parse_mrz_date(data.get("expiration_date")),
+            expiry_date=self._parse_mrz_date(data.get("expiration_date"), prefer_future=True),
             added_date=added_date,
             status=status,
             error_message=error_message,
             source_file=str(source_path),
         )
 
-    def _parse_mrz_date(self, value: object) -> date | None:
+    def _parse_mrz_date(self, value: object, prefer_future: bool = False) -> date | None:
         text = str(value or "").strip()
         if len(text) != 6 or not text.isdigit():
             return None
         year = int(text[:2])
         month = int(text[2:4])
         day = int(text[4:6])
-        full_year = 1900 + year if year > date.today().year % 100 else 2000 + year
+        if prefer_future:
+            full_year = 2000 + year
+        else:
+            full_year = 1900 + year if year > date.today().year % 100 else 2000 + year
         return date(full_year, month, day)
