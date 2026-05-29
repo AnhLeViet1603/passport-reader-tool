@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from shutil import which
 from datetime import date, datetime
 from multiprocessing import freeze_support
 from pathlib import Path
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._update_actions()
+        self._warn_if_tesseract_missing()
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("Main")
@@ -308,6 +310,15 @@ class MainWindow(QMainWindow):
             return datetime.strptime(value, "%d/%m/%Y").date()
         except ValueError:
             return None
+
+    def _warn_if_tesseract_missing(self) -> None:
+        if which("tesseract"):
+            return
+        QMessageBox.warning(
+            self,
+            "Tesseract not found",
+            "Tesseract OCR is not available on PATH. Excel features will work, but OCR will fail until Tesseract is installed.",
+        )
 
 
 def main() -> None:
