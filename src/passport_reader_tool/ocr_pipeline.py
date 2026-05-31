@@ -126,17 +126,53 @@ class MrzOcrPipeline:
         source_path = Path(image_path)
         try:
             image = self._read_image(source_path)
-            candidates = self._preprocess_candidates(image)
+            
+            # Step 1: Pre-generate preprocessed crops for all candidate regions.
+            # To optimize performance, we divide candidates into:
+            # - stage1: resized (color) crops (most likely to succeed, extremely fast)
+            # - stage2: binarized (Otsu & Adaptive threshold) crops
+            regions = self._candidate_source_regions(image)
+            
+            stage1_candidates: list[tuple[np.ndarray, int]] = []
+            stage2_candidates: list[tuple[np.ndarray, int]] = []
+            
+            candidate_index = 1
+            for region in regions:
+                resized = self._resize(region)
+                stage1_candidates.append((resized, candidate_index))
+                candidate_index += 1
+                
+                # Gray conversion & binarizations for stage 2
+                gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+                normalized = cv2.equalizeHist(gray)
+                _, threshold = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                adaptive = cv2.adaptiveThreshold(
+                    normalized,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    31,
+                    11,
+                )
+                stage2_candidates.append((threshold, candidate_index))
+                candidate_index += 1
+                stage2_candidates.append((adaptive, candidate_index))
+                candidate_index += 1
+
             last_error = "Could not read MRZ"
             debug_messages: list[str] = []
-            for candidate_index, candidate in enumerate(candidates, start=1):
+            
+            # Run Stage 1 (resized color crops)
+            stage1_detected_lines: list[int] = []
+            for candidate, index in stage1_candidates:
                 record, error, debug_message = self._read_candidate(
                     candidate,
                     image,
                     source_path,
                     row_number,
                     added_date,
-                    candidate_index,
+                    index,
+                    out_num_lines=stage1_detected_lines,
                 )
                 if debug_message:
                     debug_messages.append(debug_message)
@@ -144,6 +180,30 @@ class MrzOcrPipeline:
                     return record
                 if error:
                     last_error = error
+                    
+            # Optimization: If all Stage 1 runs detected absolutely zero lines of text,
+            # it means the image is not a document/passport or is completely unreadable.
+            # We skip Stage 2 (binarized images) entirely to save time.
+            if sum(stage1_detected_lines) > 0:
+                # Run Stage 2 (binarized crops)
+                for candidate, index in stage2_candidates:
+                    record, error, debug_message = self._read_candidate(
+                        candidate,
+                        image,
+                        source_path,
+                        row_number,
+                        added_date,
+                        index,
+                    )
+                    if debug_message:
+                        debug_messages.append(debug_message)
+                    if record and not record.is_error:
+                        return record
+                    if error:
+                        last_error = error
+            else:
+                last_error = "No text detected in any crop region"
+
             return PassportRecord(
                 row_number=row_number,
                 added_date=added_date,
@@ -228,9 +288,12 @@ class MrzOcrPipeline:
         row_number: int,
         added_date: date | None,
         candidate_index: int,
+        out_num_lines: list[int] | None = None,
     ) -> tuple[PassportRecord | None, str, str]:
         candidate_label = f"candidate {candidate_index} ({image.shape[1]}x{image.shape[0]})"
         text_rows = self.ocr_engine.read_text(image)
+        if out_num_lines is not None:
+            out_num_lines.append(len(text_rows))
         mrz = parse_mrz([text for text, _score in text_rows])
         if mrz is None:
             return None, "MRZ not found", self._debug_text_message(candidate_label, text_rows)
@@ -351,15 +414,12 @@ class VisualPassportData:
 def _extract_visual_passport_data(
     text_rows: list[tuple[str, float | None]],
     mrz: MrzData,
-    issue_date_rows: list[tuple[str, float | None]] | None = None,
 ) -> VisualPassportData:
     lines = [_clean_visual_line(text) for text, _score in text_rows]
     lines = [line for line in lines if line]
-    issue_lines = [_clean_visual_line(text) for text, _score in issue_date_rows] if issue_date_rows is not None else lines
-    issue_lines = [line for line in issue_lines if line]
     mrz_full_name = " ".join(part for part in [mrz.surname, mrz.names] if part).strip()
     full_name = _extract_visual_full_name(lines, mrz_full_name)
-    issue_date = _extract_issue_date(issue_lines)
+    issue_date = _extract_issue_date(lines)
     name_mismatch = bool(full_name and _normalize_compare_name(full_name) != _normalize_compare_name(mrz_full_name))
     return VisualPassportData(full_name=full_name, issue_date=issue_date, name_mismatch=name_mismatch)
 
@@ -466,12 +526,6 @@ def _date_from_parts(day: str, month: str, year: str) -> date | None:
 def _clean_visual_line(value: str) -> str:
     return " ".join(str(value or "").replace("|", " ").split()).strip()
 
-
-# def _clean_name_candidate(value: str) -> str:
-#     text = re.sub(r"[^A-Za-zÀ-ỹ\s]", " ", value)
-#     return " ".join(part for part in text.upper().split() if part)
-
-
 def _is_plausible_visual_name(value: str) -> bool:
     if not value:
         return False
@@ -556,13 +610,6 @@ def _normalize_for_search(value: str) -> str:
 
 def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
     return any(needle in value for needle in needles)
-
-
-# def _clean_name_candidate_unused(value: str) -> str:
-#     text = re.sub(r"[^A-Za-zÀ-ỹ\s]", " ", value)
-#     text = " ".join(part for part in text.upper().split() if part)
-#     return _strip_mrz_name_prefix(text)
-
 
 def _clean_name_candidate(value: str) -> str:
     text = re.sub(r"[^A-Za-zÀ-ỹ\s]", " ", value)

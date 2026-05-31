@@ -5,6 +5,9 @@ from datetime import date
 import re
 
 
+_NON_MRZ_RE = re.compile(r"[^A-Z0-9<]")
+
+
 MRZ_WEIGHTS = (7, 3, 1)
 MRZ_CHAR_VALUES = {str(index): index for index in range(10)}
 MRZ_CHAR_VALUES.update({chr(ord("A") + index): 10 + index for index in range(26)})
@@ -152,7 +155,7 @@ def _normalize_line(value: str) -> str:
     text = value.upper()
     text = text.replace(" ", "").replace("\t", "")
     text = text.replace("«", "<").replace("‹", "<").replace("＜", "<")
-    return "".join(character for character in text if character in MRZ_CHAR_VALUES)
+    return _NON_MRZ_RE.sub("", text)
 
 
 def _looks_like_mrz(line: str) -> bool:

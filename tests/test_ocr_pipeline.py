@@ -153,3 +153,27 @@ def test_extract_visual_passport_data_flags_visual_name_mismatch():
 
     assert data.full_name == "TAN VAN HOA"
     assert data.name_mismatch
+
+
+class EmptyOcrEngine:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def read_text(self, _image):
+        self.calls += 1
+        return []
+
+
+def test_read_passport_early_exit_on_no_text():
+    pipeline = MrzOcrPipeline(ocr_engine=EmptyOcrEngine())
+    image = np.zeros((1000, 800, 3), dtype=np.uint8)
+
+    # Mock _read_image to return dummy image
+    pipeline._read_image = lambda path: image
+
+    record = pipeline.read_passport("dummy.jpg", 1)
+
+    # Expect 4 unique region calls from Stage 1, then skip Stage 2.
+    assert pipeline.ocr_engine.calls == 4
+    assert record.is_error
+    assert record.error_message == "No text detected in any crop region"

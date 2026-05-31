@@ -38,7 +38,7 @@ class LogWrapper:
 
 from openpyxl import Workbook
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPalette, QPixmap, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -270,7 +270,10 @@ class MainWindow(QMainWindow):
             records_to_add.append(record)
 
         self.records.extend(records_to_add)
-        self._render_records()
+        self.table.blockSignals(True)
+        for record in records_to_add:
+            self._append_table_record(record)
+        self.table.blockSignals(False)
         self.import_button.setEnabled(True)
         self.dirty = bool(records_to_add)
         self._update_actions()
@@ -362,6 +365,12 @@ class MainWindow(QMainWindow):
             self.save_workbook()
             return not self.dirty
         return response == QMessageBox.Discard
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._confirm_discard_unsaved():
+            event.accept()
+        else:
+            event.ignore()
 
     def _update_actions(self) -> None:
         has_workbook = self.workbook is not None

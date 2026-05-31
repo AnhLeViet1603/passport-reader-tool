@@ -77,8 +77,11 @@ class ExcelWorkbookService:
         return worksheet
 
     def _ensure_header(self, worksheet: Worksheet) -> None:
-        current = [worksheet.cell(row=1, column=i + 1).value for i in range(len(EXCEL_HEADERS))]
-        old_current = [worksheet.cell(row=1, column=i + 1).value for i in range(len(OLD_EXCEL_HEADERS))]
+        row1 = next(worksheet.iter_rows(min_row=1, max_row=1, max_col=len(EXCEL_HEADERS), values_only=True), None)
+        if not row1:
+            row1 = ()
+        current = [row1[i] if i < len(row1) else None for i in range(len(EXCEL_HEADERS))]
+        old_current = [row1[i] if i < len(row1) else None for i in range(len(OLD_EXCEL_HEADERS))]
         if old_current == OLD_EXCEL_HEADERS:
             worksheet.insert_cols(6)
             self._write_header(worksheet)
@@ -117,10 +120,13 @@ class ExcelWorkbookService:
             worksheet.cell(row=row_index, column=2).fill = WARNING_FILL
 
     def _read_records(self, worksheet: Worksheet) -> Iterable[PassportRecord]:
-        for row_index in range(2, worksheet.max_row + 1):
-            values = [worksheet.cell(row=row_index, column=i).value for i in range(1, len(EXCEL_HEADERS) + 1)]
-            if not any(values):
+        for row_index, row in enumerate(
+            worksheet.iter_rows(min_row=2, max_col=len(EXCEL_HEADERS), values_only=True),
+            start=2,
+        ):
+            if not row or not any(row):
                 continue
+            values = list(row) + [None] * (len(EXCEL_HEADERS) - len(row))
             yield PassportRecord(
                 row_number=int(values[0] or row_index - 1),
                 full_name=str(values[1] or ""),
