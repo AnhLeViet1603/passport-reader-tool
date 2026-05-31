@@ -16,7 +16,9 @@ from passport_reader_tool.tesseract_runtime import configure_tesseract
 @dataclass(frozen=True, slots=True)
 class OcrConfig:
     target_width: int = 1600
+    mrz_crop_ratio: float = 0.22
     bottom_crop_ratio: float = 0.38
+    fallback_bottom_crop_ratio: float = 0.60
     min_valid_score: int = 100
 
 
@@ -60,8 +62,29 @@ class MrzOcrPipeline:
         return image
 
     def _preprocess_candidates(self, image: np.ndarray) -> list[np.ndarray]:
-        cropped = self._crop_bottom(image)
-        resized = self._resize(cropped)
+        candidates: list[np.ndarray] = []
+        for source in self._candidate_source_regions(image):
+            candidates.extend(self._preprocess_region(source))
+        return candidates
+
+    def _candidate_source_regions(self, image: np.ndarray) -> list[np.ndarray]:
+        regions = [
+            self._crop_bottom(image, self.config.mrz_crop_ratio),
+            self._crop_bottom(image, self.config.bottom_crop_ratio),
+            self._crop_bottom(image, self.config.fallback_bottom_crop_ratio),
+            image,
+        ]
+        unique_regions: list[np.ndarray] = []
+        seen_shapes: set[tuple[int, int, int]] = set()
+        for region in regions:
+            shape = region.shape
+            if shape not in seen_shapes:
+                seen_shapes.add(shape)
+                unique_regions.append(region)
+        return unique_regions
+
+    def _preprocess_region(self, image: np.ndarray) -> list[np.ndarray]:
+        resized = self._resize(image)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         normalized = cv2.equalizeHist(gray)
         _, threshold = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -75,9 +98,11 @@ class MrzOcrPipeline:
         )
         return [resized, threshold, adaptive]
 
-    def _crop_bottom(self, image: np.ndarray) -> np.ndarray:
+    def _crop_bottom(self, image: np.ndarray, ratio: float | None = None) -> np.ndarray:
         height = image.shape[0]
-        start = max(0, int(height * (1 - self.config.bottom_crop_ratio)))
+        crop_ratio = self.config.bottom_crop_ratio if ratio is None else ratio
+        crop_ratio = min(1.0, max(0.0, crop_ratio))
+        start = max(0, int(height * (1 - crop_ratio)))
         return image[start:height, :]
 
     def _resize(self, image: np.ndarray) -> np.ndarray:

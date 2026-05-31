@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -39,16 +38,16 @@ class BatchWorker(QThread):
     finished = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, folder: str, start_row_number: int) -> None:
+    def __init__(self, files: list[str], start_row_number: int) -> None:
         super().__init__()
-        self.folder = folder
+        self.files = files
         self.start_row_number = start_row_number
 
     def run(self) -> None:
         try:
-            from passport_reader_tool.batch_processor import process_folder
+            from passport_reader_tool.batch_processor import process_files
 
-            records = process_folder(self.folder, self.start_row_number, progress_callback=self.progress.emit)
+            records = process_files(self.files, self.start_row_number, progress_callback=self.progress.emit)
             self.finished.emit(records)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -88,7 +87,14 @@ class MainWindow(QMainWindow):
         file_button.setMenu(file_menu)
         toolbar.addWidget(file_button)
 
-        self.import_button = QPushButton("Import Folder")
+        self.import_button = QToolButton()
+        self.import_button.setText("Import Images")
+        self.import_button.setPopupMode(QToolButton.InstantPopup)
+        import_menu = QMenu(self.import_button)
+        self.import_folder_action = QAction("Folder...", self)
+        self.import_files_action = QAction("Files...", self)
+        import_menu.addActions([self.import_folder_action, self.import_files_action])
+        self.import_button.setMenu(import_menu)
         toolbar.addWidget(self.import_button)
 
         self.path_label = QLabel("No workbook")
@@ -128,7 +134,8 @@ class MainWindow(QMainWindow):
         self.open_action.triggered.connect(self.open_workbook)
         self.save_action.triggered.connect(self.save_workbook)
         self.save_as_action.triggered.connect(self.save_as_workbook)
-        self.import_button.clicked.connect(self.import_folder)
+        self.import_folder_action.triggered.connect(self.import_folder)
+        self.import_files_action.triggered.connect(self.import_files)
 
     def new_workbook(self) -> None:
         if not self._confirm_discard_unsaved():
@@ -183,10 +190,29 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Image Folder")
         if not folder:
             return
+        from passport_reader_tool.batch_processor import find_image_files
+
+        files = [str(path) for path in find_image_files(folder)]
+        if not files:
+            QMessageBox.information(self, "No images found", "The selected folder does not contain supported image files.")
+            return
+        self._start_import(files, f"Processing folder: {folder}")
+
+    def import_files(self) -> None:
+        if self.workbook is None:
+            QMessageBox.information(self, "Workbook required", "Create or open an Excel workbook first.")
+            return
+        image_filter = "Images (*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.webp)"
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Image Files", "", image_filter)
+        if not files:
+            return
+        self._start_import(files, f"Processing {len(files)} selected file(s)")
+
+    def _start_import(self, files: list[str], log_message: str) -> None:
         self.import_button.setEnabled(False)
         self.progress.setValue(0)
-        self.log.addItem(f"Processing folder: {folder}")
-        self.worker = BatchWorker(folder, len(self.records) + 1)
+        self.log.addItem(log_message)
+        self.worker = BatchWorker(files, len(self.records) + 1)
         self.worker.progress.connect(self._on_batch_progress)
         self.worker.finished.connect(self._on_batch_finished)
         self.worker.failed.connect(self._on_batch_failed)
@@ -291,6 +317,8 @@ class MainWindow(QMainWindow):
         self.save_action.setEnabled(has_workbook and self.current_path is not None)
         self.save_as_action.setEnabled(has_workbook)
         self.import_button.setEnabled(has_workbook and not (self.worker and self.worker.isRunning()))
+        self.import_folder_action.setEnabled(self.import_button.isEnabled())
+        self.import_files_action.setEnabled(self.import_button.isEnabled())
         label = str(self.current_path) if self.current_path else "No workbook"
         if self.dirty:
             label += " *"
@@ -326,37 +354,117 @@ class MainWindow(QMainWindow):
 def main() -> None:
     freeze_support()
     app = QApplication(sys.argv)
+    _apply_light_theme(app)
     splash = _create_splash()
     splash.show()
-    splash.showMessage("Loading workbook tools...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#ffffff"))
+    splash.showMessage("Loading workbook tools...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#20242a"))
     app.processEvents()
     window = MainWindow()
-    splash.showMessage("Opening app...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#ffffff"))
+    splash.showMessage("Opening app...", Qt.AlignBottom | Qt.AlignHCenter, QColor("#20242a"))
     app.processEvents()
     window.show()
     splash.finish(window)
     sys.exit(app.exec())
 
 
+def _apply_light_theme(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#f6f7f9"))
+    palette.setColor(QPalette.WindowText, QColor("#20242a"))
+    palette.setColor(QPalette.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.AlternateBase, QColor("#eef1f5"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#20242a"))
+    palette.setColor(QPalette.Text, QColor("#20242a"))
+    palette.setColor(QPalette.Button, QColor("#f1f3f6"))
+    palette.setColor(QPalette.ButtonText, QColor("#20242a"))
+    palette.setColor(QPalette.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.Highlight, QColor("#2f6fed"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.Link, QColor("#2f6fed"))
+    app.setPalette(palette)
+    app.setStyleSheet(
+        """
+        QMainWindow, QWidget {
+            background: #f6f7f9;
+            color: #20242a;
+        }
+        QToolBar {
+            background: #ffffff;
+            border-bottom: 1px solid #d8dde6;
+            spacing: 8px;
+        }
+        QTableWidget, QListWidget {
+            background: #ffffff;
+            border: 1px solid #d8dde6;
+            gridline-color: #e3e7ee;
+            selection-background-color: #d9e7ff;
+            selection-color: #111827;
+        }
+        QHeaderView::section {
+            background: #eef1f5;
+            color: #20242a;
+            border: 0;
+            border-right: 1px solid #d8dde6;
+            border-bottom: 1px solid #d8dde6;
+            padding: 6px;
+        }
+        QPushButton, QToolButton {
+            background: #ffffff;
+            border: 1px solid #c8ced8;
+            border-radius: 4px;
+            padding: 5px 10px;
+        }
+        QPushButton:hover, QToolButton:hover {
+            background: #eef4ff;
+            border-color: #9bbbf5;
+        }
+        QPushButton:disabled, QToolButton:disabled {
+            background: #eef1f5;
+            color: #8b95a1;
+        }
+        QMenu {
+            background: #ffffff;
+            border: 1px solid #c8ced8;
+        }
+        QMenu::item:selected {
+            background: #d9e7ff;
+            color: #111827;
+        }
+        QProgressBar {
+            background: #ffffff;
+            border: 1px solid #c8ced8;
+            border-radius: 4px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background: #2f6fed;
+            border-radius: 3px;
+        }
+        """
+    )
+
+
 def _create_splash() -> QSplashScreen:
     pixmap = QPixmap(520, 280)
-    pixmap.fill(QColor("#16202a"))
+    pixmap.fill(QColor("#f6f7f9"))
 
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(QColor("#ffffff"))
+    painter.setPen(QColor("#20242a"))
     title_font = QFont("Segoe UI", 24)
     title_font.setBold(True)
     painter.setFont(title_font)
     painter.drawText(32, 86, "Passport Reader Tool")
 
-    painter.setPen(QColor("#b8c7d6"))
+    painter.setPen(QColor("#4b5563"))
     subtitle_font = QFont("Segoe UI", 11)
     painter.setFont(subtitle_font)
     painter.drawText(34, 126, "Preparing desktop workspace and OCR runtime")
 
-    painter.setPen(QColor("#3fbf8f"))
-    painter.setBrush(QColor("#3fbf8f"))
+    painter.setPen(QColor("#2f6fed"))
+    painter.setBrush(QColor("#2f6fed"))
     painter.drawRoundedRect(34, 166, 452, 6, 3, 3)
     painter.end()
 
