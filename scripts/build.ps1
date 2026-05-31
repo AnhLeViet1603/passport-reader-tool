@@ -36,23 +36,36 @@ $argsList = @(
     "--name",
     "PassportReaderTool",
     "--collect-all",
-    "passporteye",
+    "paddleocr",
     "--collect-all",
-    "PySide6",
-    "--collect-all",
-    "imageio",
-    "--copy-metadata",
-    "imageio"
+    "paddlex"
 )
 
-$tesseractDir = Join-Path $PSScriptRoot "..\vendor\tesseract"
-$tesseractExe = Join-Path $tesseractDir "tesseract.exe"
-if (Test-Path $tesseractExe) {
-    $argsList += @("--add-data", "$tesseractDir;tesseract")
-    Write-Host "Bundling Tesseract from $tesseractDir"
-} else {
-    Write-Host "No bundled Tesseract found at $tesseractDir"
-    Write-Host "Build will still work, but OCR requires Tesseract on PATH unless vendor/tesseract is added."
+$vendorModelsDir = Join-Path $PSScriptRoot "..\vendor\paddlex_models"
+if (-not (Test-Path $vendorModelsDir)) {
+    $userModelsDir = Join-Path $env:USERPROFILE ".paddlex\official_models"
+    if (Test-Path $userModelsDir) {
+        Write-Host "Creating vendor/paddlex_models and copying models from $userModelsDir..."
+        New-Item -ItemType Directory -Force -Path $vendorModelsDir | Out-Null
+        $modelsToCopy = @("PP-OCRv5_server_det", "en_PP-OCRv5_mobile_rec", "PP-LCNet_x1_0_textline_ori")
+        foreach ($model in $modelsToCopy) {
+            $src = Join-Path $userModelsDir $model
+            if (Test-Path $src) {
+                $dest = Join-Path $vendorModelsDir $model
+                Copy-Item -LiteralPath $src -Destination $dest -Recurse -Force
+                Write-Host "Copied $model"
+            } else {
+                Write-Warning "Model $model not found in $userModelsDir"
+            }
+        }
+    } else {
+        Write-Warning "Could not find local paddle models at $userModelsDir or $vendorModelsDir."
+    }
+}
+
+if (Test-Path $vendorModelsDir) {
+    $argsList += @("--add-data", "$vendorModelsDir;paddlex_models")
+    Write-Host "Bundling paddle models from $vendorModelsDir"
 }
 
 $argsList += "src/passport_reader_tool/app.py"

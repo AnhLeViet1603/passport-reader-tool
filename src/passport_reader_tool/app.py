@@ -2,8 +2,39 @@ from __future__ import annotations
 
 import sys
 from datetime import date, datetime
+from importlib.util import find_spec
+import logging
+from logging.handlers import RotatingFileHandler
 from multiprocessing import freeze_support
 from pathlib import Path
+import traceback
+
+
+def setup_logging() -> None:
+    if hasattr(sys, "frozen"):
+        install_dir = Path(sys.executable).resolve().parent
+    else:
+        install_dir = Path(__file__).resolve().parents[2]
+
+    log_dir = install_dir / "log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "app.log"
+
+    handler = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+
+class LogWrapper:
+    def __init__(self) -> None:
+        self._logger = logging.getLogger("app")
+
+    def addItem(self, text: str) -> None:
+        self._logger.info(text)
 
 from openpyxl import Workbook
 from PySide6.QtCore import QThread, Signal, Qt
@@ -13,12 +44,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
     QProgressBar,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QToolBar,
@@ -30,7 +59,6 @@ from PySide6.QtWidgets import (
 
 from passport_reader_tool.excel_service import EXCEL_HEADERS, ExcelWorkbookService
 from passport_reader_tool.models import PassportRecord
-from passport_reader_tool.tesseract_runtime import configure_tesseract
 
 
 class BatchWorker(QThread):
@@ -50,6 +78,7 @@ class BatchWorker(QThread):
             records = process_files(self.files, self.start_row_number, progress_callback=self.progress.emit)
             self.finished.emit(records)
         except Exception as exc:
+            traceback.print_exc(file=sys.stderr)
             self.failed.emit(str(exc))
 
 
@@ -68,7 +97,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._update_actions()
-        self._warn_if_tesseract_missing()
+        self._warn_if_paddleocr_missing()
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("Main")
@@ -108,18 +137,8 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
 
-        self.log = QListWidget()
-        self.log.setMaximumHeight(150)
-
-        bottom = QWidget()
-        bottom_layout = QVBoxLayout(bottom)
-        bottom_layout.addWidget(self.progress)
-        bottom_layout.addWidget(QLabel("Log"))
-        bottom_layout.addWidget(self.log)
-
-        splitter = QSplitter(Qt.Vertical)
-        splitter.addWidget(self.table)
-        splitter.addWidget(bottom)
+        # Redirect self.log.addItem(...) to rotating file logs
+        self.log = LogWrapper()
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -127,7 +146,8 @@ class MainWindow(QMainWindow):
         top_row.addWidget(QLabel("Workbook data"))
         top_row.addStretch()
         layout.addLayout(top_row)
-        layout.addWidget(splitter)
+        layout.addWidget(self.table)
+        layout.addWidget(self.progress)
         self.setCentralWidget(container)
 
         self.new_action.triggered.connect(self.new_workbook)
@@ -222,16 +242,40 @@ class MainWindow(QMainWindow):
         percent = int((progress.completed / progress.total) * 100) if progress.total else 0
         self.progress.setValue(percent)
         status = "ERROR" if record.is_error else "OK"
-        self.log.addItem(f"[{status}] {progress.completed}/{progress.total}: {Path(progress.current_file).name}")
+        status_line = f"[{status}] {progress.completed}/{progress.total}: {Path(progress.current_file).name}"
+        print(status_line, file=sys.stderr if record.is_error else sys.stdout, flush=True)
+        self.log.addItem(status_line)
+        if record.error_message:
+            error_line = f"  error: {record.error_message}"
+            print(error_line, file=sys.stderr, flush=True)
+            self.log.addItem(error_line)
+        if record.debug_message:
+            for line in record.debug_message.splitlines():
+                debug_line = f"  debug: {line}"
+                print(debug_line, file=sys.stderr if record.is_error else sys.stdout, flush=True)
+                self.log.addItem(debug_line)
 
     def _on_batch_finished(self, records: list[PassportRecord]) -> None:
-        self.records.extend(records)
+        existing_passport_numbers = {_normalize_passport_number(record.passport_number) for record in self.records}
+        records_to_add: list[PassportRecord] = []
+        skipped = 0
+        for record in records:
+            passport_number = _normalize_passport_number(record.passport_number)
+            if passport_number and passport_number in existing_passport_numbers:
+                skipped += 1
+                self.log.addItem(f"[SKIP] Duplicate passport number: {record.passport_number} ({Path(record.source_file).name})")
+                continue
+            if passport_number:
+                existing_passport_numbers.add(passport_number)
+            records_to_add.append(record)
+
+        self.records.extend(records_to_add)
         self._render_records()
         self.import_button.setEnabled(True)
-        self.dirty = True
+        self.dirty = bool(records_to_add)
         self._update_actions()
         errors = sum(1 for record in records if record.is_error)
-        self.log.addItem(f"Batch completed: {len(records)} files, {errors} errors")
+        self.log.addItem(f"Batch completed: {len(records)} files, {len(records_to_add)} added, {skipped} skipped, {errors} errors")
 
     def _on_batch_failed(self, message: str) -> None:
         self.import_button.setEnabled(True)
@@ -253,6 +297,7 @@ class MainWindow(QMainWindow):
             self._format_date(record.date_of_birth),
             record.sex,
             record.passport_number,
+            self._format_date(record.issue_date),
             self._format_date(record.expiry_date),
             self._format_date(record.added_date),
         ]
@@ -262,6 +307,8 @@ class MainWindow(QMainWindow):
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             if record.is_error:
                 item.setBackground(QColor("#ffc7ce"))
+            elif record.name_mismatch and column == 1:
+                item.setBackground(QColor("#ffeb9c"))
             self.table.setItem(row, column, item)
 
     def _save_to_current_path(self) -> None:
@@ -281,10 +328,14 @@ class MainWindow(QMainWindow):
                     date_of_birth=self._parse_date(self._text(row, 2)),
                     sex=self._text(row, 3),
                     passport_number=self._text(row, 4),
-                    expiry_date=self._parse_date(self._text(row, 5)),
-                    added_date=self._parse_date(self._text(row, 6)),
+                    issue_date=self._parse_date(self._text(row, 5)),
+                    expiry_date=self._parse_date(self._text(row, 6)),
+                    added_date=self._parse_date(self._text(row, 7)),
+                    mrz_full_name=self.records[row].mrz_full_name if row < len(self.records) else "",
+                    name_mismatch=self.records[row].name_mismatch if row < len(self.records) else False,
                     status=self.records[row].status if row < len(self.records) else "ok",
                     error_message=self.records[row].error_message if row < len(self.records) else "",
+                    debug_message=self.records[row].debug_message if row < len(self.records) else "",
                     source_file=self.records[row].source_file if row < len(self.records) else "",
                 )
             )
@@ -341,18 +392,19 @@ class MainWindow(QMainWindow):
         except ValueError:
             return None
 
-    def _warn_if_tesseract_missing(self) -> None:
-        if configure_tesseract():
+    def _warn_if_paddleocr_missing(self) -> None:
+        if find_spec("paddleocr") is not None:
             return
         QMessageBox.warning(
             self,
-            "Tesseract not found",
-            "Tesseract OCR is not bundled and is not available on PATH. Excel features will work, but OCR will fail until Tesseract is bundled or installed.",
+            "PaddleOCR not found",
+            "PaddleOCR is not installed. Excel features will work, but OCR will fail until dependencies are installed with uv sync.",
         )
 
 
 def main() -> None:
     freeze_support()
+    setup_logging()
     app = QApplication(sys.argv)
     _apply_light_theme(app)
     splash = _create_splash()
@@ -446,6 +498,10 @@ def _apply_light_theme(app: QApplication) -> None:
     )
 
 
+def _normalize_passport_number(value: str) -> str:
+    return "".join(character for character in str(value or "").upper() if character.isalnum())
+
+
 def _create_splash() -> QSplashScreen:
     pixmap = QPixmap(520, 280)
     pixmap.fill(QColor("#f6f7f9"))
@@ -461,7 +517,7 @@ def _create_splash() -> QSplashScreen:
     painter.setPen(QColor("#4b5563"))
     subtitle_font = QFont("Segoe UI", 11)
     painter.setFont(subtitle_font)
-    painter.drawText(34, 126, "Preparing desktop workspace and OCR runtime")
+    painter.drawText(34, 126, "Preparing desktop workspace and PaddleOCR runtime")
 
     painter.setPen(QColor("#2f6fed"))
     painter.setBrush(QColor("#2f6fed"))

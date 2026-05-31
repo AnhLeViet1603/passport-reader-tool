@@ -6,7 +6,8 @@ Desktop app for batch-reading passport MRZ from scanned or phone-captured images
 
 - Python
 - PySide6
-- PassportEye + Tesseract OCR
+- PaddleOCR
+- Internal MRZ parser and checksum validator
 - OpenCV
 - openpyxl
 - uv
@@ -21,25 +22,9 @@ make test
 make build
 ```
 
-Tesseract OCR must be installed and available on `PATH` for OCR to work.
+PaddleOCR runs inference locally. On first use, it may download/cache model
+files if they are not already available on the machine.
 
 ## Windows build
 
 `make build` runs PyInstaller and writes the desktop app into `dist/PassportReaderTool/`.
-
-To ship OCR without requiring users to install Tesseract, put a portable Windows
-Tesseract distribution in:
-
-```text
-vendor/tesseract/tesseract.exe
-vendor/tesseract/tessdata/eng.traineddata
-```
-
-Then run:
-
-```powershell
-make build
-```
-
-The build copies that folder into `dist/PassportReaderTool/_internal/tesseract`,
-and the app uses the bundled `tesseract.exe` automatically.

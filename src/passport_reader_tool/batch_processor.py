@@ -4,7 +4,10 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
+import os
 from pathlib import Path
+import sys
+import traceback
 from typing import Iterable
 
 from passport_reader_tool.models import PassportRecord
@@ -23,6 +26,7 @@ class BatchProgress:
 
 
 ProgressCallback = Callable[[BatchProgress, PassportRecord], None]
+_WORKER_PIPELINE: MrzOcrPipeline | None = None
 
 
 def find_image_files(folder: str | Path) -> list[Path]:
@@ -33,12 +37,43 @@ def find_image_files(folder: str | Path) -> list[Path]:
 
 
 def recommended_worker_count() -> int:
-    try:
-        import os
+    memory_gb = _total_memory_gb()
+    cpu_count = os.cpu_count() or 1
+    if memory_gb >= 16 and cpu_count >= 6:
+        return 2
+    return 1
 
-        return max(1, min(4, (os.cpu_count() or 2) - 1))
-    except Exception:
-        return 1
+
+def _total_memory_gb() -> float:
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullTotalPhys / (1024**3)
+        except Exception:
+            return 0
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        page_count = os.sysconf("SC_PHYS_PAGES")
+        return page_size * page_count / (1024**3)
+    except (AttributeError, OSError, ValueError):
+        return 0
 
 
 def process_folder(
@@ -79,6 +114,7 @@ def process_files(
             try:
                 record = future.result()
             except Exception as exc:
+                traceback.print_exc(file=sys.stderr)
                 record = PassportRecord(
                     row_number=start_row_number + index,
                     added_date=added_date,
@@ -99,5 +135,11 @@ def process_files(
 
 
 def _process_one_file(path: Path, row_number: int, added_date: date) -> PassportRecord:
-    pipeline = MrzOcrPipeline(OcrConfig())
-    return pipeline.read_passport(path, row_number, added_date)
+    return _get_worker_pipeline().read_passport(path, row_number, added_date)
+
+
+def _get_worker_pipeline() -> MrzOcrPipeline:
+    global _WORKER_PIPELINE
+    if _WORKER_PIPELINE is None:
+        _WORKER_PIPELINE = MrzOcrPipeline(OcrConfig())
+    return _WORKER_PIPELINE

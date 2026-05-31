@@ -8,7 +8,8 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python>=4.9",
     "openpyxl>=3.1",
-    "passporteye>=2.2",
+    "paddleocr>=3.0",
+    "paddlepaddle>=3.0",
     "pillow>=10.0",
     "pyside6>=6.7",
 ]

@@ -17,6 +17,16 @@ EXCEL_HEADERS = [
     "Ngày sinh",
     "Giới tính",
     "Số hộ chiếu",
+    "Ngày cấp",
+    "Ngày hết hạn",
+    "Ngày thêm",
+]
+OLD_EXCEL_HEADERS = [
+    "STT",
+    "Họ tên",
+    "Ngày sinh",
+    "Giới tính",
+    "Số hộ chiếu",
     "Ngày hết hạn",
     "Ngày thêm",
 ]
@@ -25,6 +35,7 @@ SHEET_NAME = "Passport Data"
 DATE_FORMAT = "dd/mm/yyyy"
 ERROR_FILL = PatternFill(fill_type="solid", fgColor="FFC7CE")
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="D9EAF7")
+WARNING_FILL = PatternFill(fill_type="solid", fgColor="FFEB9C")
 
 
 class ExcelWorkbookService:
@@ -67,6 +78,12 @@ class ExcelWorkbookService:
 
     def _ensure_header(self, worksheet: Worksheet) -> None:
         current = [worksheet.cell(row=1, column=i + 1).value for i in range(len(EXCEL_HEADERS))]
+        old_current = [worksheet.cell(row=1, column=i + 1).value for i in range(len(OLD_EXCEL_HEADERS))]
+        if old_current == OLD_EXCEL_HEADERS:
+            worksheet.insert_cols(6)
+            self._write_header(worksheet)
+            self._set_column_widths(worksheet)
+            return
         if current != EXCEL_HEADERS:
             self._write_header(worksheet)
             self._set_column_widths(worksheet)
@@ -85,16 +102,19 @@ class ExcelWorkbookService:
             record.date_of_birth,
             record.sex,
             record.passport_number,
+            record.issue_date,
             record.expiry_date,
             record.added_date,
         ]
         worksheet.append(row)
         row_index = worksheet.max_row
-        for column_index in (3, 6, 7):
+        for column_index in (3, 6, 7, 8):
             worksheet.cell(row=row_index, column=column_index).number_format = DATE_FORMAT
         if record.is_error:
             for column_index in range(1, len(EXCEL_HEADERS) + 1):
                 worksheet.cell(row=row_index, column=column_index).fill = ERROR_FILL
+        elif record.name_mismatch:
+            worksheet.cell(row=row_index, column=2).fill = WARNING_FILL
 
     def _read_records(self, worksheet: Worksheet) -> Iterable[PassportRecord]:
         for row_index in range(2, worksheet.max_row + 1):
@@ -107,8 +127,9 @@ class ExcelWorkbookService:
                 date_of_birth=self._date_or_none(values[2]),
                 sex=str(values[3] or ""),
                 passport_number=str(values[4] or ""),
-                expiry_date=self._date_or_none(values[5]),
-                added_date=self._date_or_none(values[6]),
+                issue_date=self._date_or_none(values[5]),
+                expiry_date=self._date_or_none(values[6]),
+                added_date=self._date_or_none(values[7]),
             )
 
     def _clear_sheet(self, worksheet: Worksheet) -> None:
@@ -116,7 +137,7 @@ class ExcelWorkbookService:
             worksheet.delete_rows(1, worksheet.max_row)
 
     def _set_column_widths(self, worksheet: Worksheet) -> None:
-        widths = [8, 28, 14, 12, 18, 16, 14]
+        widths = [8, 28, 14, 12, 18, 14, 16, 14]
         for index, width in enumerate(widths, start=1):
             worksheet.column_dimensions[worksheet.cell(row=1, column=index).column_letter].width = width
 

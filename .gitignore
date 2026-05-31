@@ -26,6 +26,7 @@ samples/private/
 
 vendor/tesseract/*
 !vendor/tesseract/README.md
+vendor/paddlex_models/
 
 .DS_Store
 Thumbs.db
